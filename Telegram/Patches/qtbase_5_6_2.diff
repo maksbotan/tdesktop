@@ -11996,6 +11996,16 @@ index bc2de89..aa8f8df 100644
  /*!
      Returns a list of urls containing the selected files in the dialog.
      If no files are selected, or the mode is not ExistingFiles or
+@@ -1297,7 +1314,8 @@
+     Makes a list of filters from ;;-separated text.
+     Used by the mac and windows implementations
+ */
+-QStringList qt_make_filter_list(const QString &filter)
++// Patch: make this available to Telegram linked to Qt shared libraries
++Q_GUI_EXPORT QStringList qt_make_filter_list(const QString &filter)
+ {
+     QString f(filter);
+ 
 diff --git a/src/widgets/dialogs/qfiledialog.h b/src/widgets/dialogs/qfiledialog.h
 index ffe49a2..42dc563 100644
 --- a/src/widgets/dialogs/qfiledialog.h

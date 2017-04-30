@@ -1,0 +1,1278 @@
+diff -urN qtbase-opensource-src-5.7.1-orig/mkspecs/common/msvc-desktop.conf qtbase-opensource-src-5.7.1/mkspecs/common/msvc-desktop.conf
+--- qtbase-opensource-src-5.7.1-orig/mkspecs/common/msvc-desktop.conf	2016-12-01 11:17:04.000000000 +0300
++++ qtbase-opensource-src-5.7.1/mkspecs/common/msvc-desktop.conf	2017-04-30 12:10:24.851757569 +0300
+@@ -30,9 +30,10 @@
+ QMAKE_CFLAGS            = -nologo -Zc:wchar_t
+ QMAKE_CFLAGS_WARN_ON    = -W3
+ QMAKE_CFLAGS_WARN_OFF   = -W0
+-QMAKE_CFLAGS_RELEASE    = -O2 -MD
+-QMAKE_CFLAGS_RELEASE_WITH_DEBUGINFO += -O2 -MD -Zi
+-QMAKE_CFLAGS_DEBUG      = -Zi -MDd
++# Patch: Make this build use static runtime library.
++QMAKE_CFLAGS_RELEASE    = -O2 -MT
++QMAKE_CFLAGS_RELEASE_WITH_DEBUGINFO += -O2 -MT -Zi
++QMAKE_CFLAGS_DEBUG      = -Zi -MTd
+ QMAKE_CFLAGS_YACC       =
+ QMAKE_CFLAGS_LTCG       = -GL
+ 
+diff -urN qtbase-opensource-src-5.7.1-orig/src/corelib/tools/qunicodetables.cpp qtbase-opensource-src-5.7.1/src/corelib/tools/qunicodetables.cpp
+--- qtbase-opensource-src-5.7.1-orig/src/corelib/tools/qunicodetables.cpp	2016-12-01 11:17:04.000000000 +0300
++++ qtbase-opensource-src-5.7.1/src/corelib/tools/qunicodetables.cpp	2017-04-30 12:10:24.854757607 +0300
+@@ -6233,7 +6233,8 @@
+     { 1, 0, 0, 0, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11, 0, 7, 4, 4, 21, 11 },
+     { 0, 17, 230, 5, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 4, 4, 4, 21, 11 },
+     { 18, 0, 0, 0, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 85, 0, 8, 8, 12, 11 },
+-    { 25, 0, 0, 0, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 12, 17, 2 },
++    // Patch: Some bad characters appeared in ui in case 2 was here instead of 11.
++    { 25, 0, 0, 0, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 12, 17, 11 },
+     { 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 14, 9, 11, 11 },
+     { 3, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 14, 9, 11, 11 },
+     { 3, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 14, 9, 11, 11 },
+diff -urN qtbase-opensource-src-5.7.1-orig/src/gui/kernel/qplatformdialoghelper.h qtbase-opensource-src-5.7.1/src/gui/kernel/qplatformdialoghelper.h
+--- qtbase-opensource-src-5.7.1-orig/src/gui/kernel/qplatformdialoghelper.h	2016-12-01 11:17:04.000000000 +0300
++++ qtbase-opensource-src-5.7.1/src/gui/kernel/qplatformdialoghelper.h	2017-04-30 12:10:24.855757620 +0300
+@@ -397,6 +397,10 @@
+     virtual QUrl directory() const = 0;
+     virtual void selectFile(const QUrl &filename) = 0;
+     virtual QList<QUrl> selectedFiles() const = 0;
++
++    // Patch: Adding select-by-url for Windows file dialog.
++    virtual QByteArray selectedRemoteContent() const { return QByteArray(); }
++
+     virtual void setFilter() = 0;
+     virtual void selectNameFilter(const QString &filter) = 0;
+     virtual QString selectedNameFilter() const = 0;
+diff -urN qtbase-opensource-src-5.7.1-orig/src/gui/kernel/qwindow.cpp qtbase-opensource-src-5.7.1/src/gui/kernel/qwindow.cpp
+--- qtbase-opensource-src-5.7.1-orig/src/gui/kernel/qwindow.cpp	2016-12-01 11:17:04.000000000 +0300
++++ qtbase-opensource-src-5.7.1/src/gui/kernel/qwindow.cpp	2017-04-30 12:10:24.855757620 +0300
+@@ -2565,7 +2565,8 @@
+ void QWindowPrivate::applyCursor()
+ {
+     Q_Q(QWindow);
+-    if (platformWindow) {
++    // Patch: Fixing possible crash (crashdumps point on this code line).
++    if (platformWindow && q->screen() && q->screen()->handle()) {
+         if (QPlatformCursor *platformCursor = q->screen()->handle()->cursor()) {
+             QCursor *c = QGuiApplication::overrideCursor();
+             if (!c && hasCursor)
+diff -urN qtbase-opensource-src-5.7.1-orig/src/gui/painting/qpaintengine_p.h qtbase-opensource-src-5.7.1/src/gui/painting/qpaintengine_p.h
+--- qtbase-opensource-src-5.7.1-orig/src/gui/painting/qpaintengine_p.h	2016-12-01 11:17:04.000000000 +0300
++++ qtbase-opensource-src-5.7.1/src/gui/painting/qpaintengine_p.h	2017-04-30 12:10:24.856757633 +0300
+@@ -86,8 +86,18 @@
+         if (hasSystemTransform) {
+             if (systemTransform.type() <= QTransform::TxTranslate)
+                 systemClip.translate(qRound(systemTransform.dx()), qRound(systemTransform.dy()));
+-            else
++            // Patch: Transform the system clip region back from device pixels to device-independent pixels before
++            // applying systemTransform, which already has transform from device-independent pixels to device pixels.
++            else {
++#ifdef Q_OS_MAC
++                QTransform scaleTransform;
++                const qreal invDevicePixelRatio = 1. / pdev->devicePixelRatio();
++                scaleTransform.scale(invDevicePixelRatio, invDevicePixelRatio);
++                systemClip = systemTransform.map(scaleTransform.map(systemClip));
++#else
+                 systemClip = systemTransform.map(systemClip);
++#endif
++            }
+         }
+ 
+         // Make sure we're inside the viewport.
+diff -urN qtbase-opensource-src-5.7.1-orig/src/gui/text/qtextengine_p.h qtbase-opensource-src-5.7.1/src/gui/text/qtextengine_p.h
+--- qtbase-opensource-src-5.7.1-orig/src/gui/text/qtextengine_p.h	2016-12-01 11:17:04.000000000 +0300
++++ qtbase-opensource-src-5.7.1/src/gui/text/qtextengine_p.h	2017-04-30 12:10:24.859757672 +0300
+@@ -290,7 +290,8 @@
+ 
+ struct QScriptItem;
+ /// Internal QTextItem
+-class QTextItemInt : public QTextItem
++// Patch: Enable access to QTextItemInt in .dll for WinRT build.
++class Q_GUI_EXPORT QTextItemInt : public QTextItem
+ {
+ public:
+     inline QTextItemInt()
+diff -urN qtbase-opensource-src-5.7.1-orig/src/gui/text/qtextlayout.cpp qtbase-opensource-src-5.7.1/src/gui/text/qtextlayout.cpp
+--- qtbase-opensource-src-5.7.1-orig/src/gui/text/qtextlayout.cpp	2016-12-01 11:17:04.000000000 +0300
++++ qtbase-opensource-src-5.7.1/src/gui/text/qtextlayout.cpp	2017-04-30 12:10:24.860757685 +0300
+@@ -700,6 +700,9 @@
+         while (oldPos < len && !attributes[oldPos].graphemeBoundary)
+             oldPos++;
+     } else {
++        // Patch: Skip to the end of the current word, not to the start of the next one.
++        while (oldPos < len && attributes[oldPos].whiteSpace)
++            oldPos++;
+         if (oldPos < len && d->atWordSeparator(oldPos)) {
+             oldPos++;
+             while (oldPos < len && d->atWordSeparator(oldPos))
+@@ -708,8 +711,9 @@
+             while (oldPos < len && !attributes[oldPos].whiteSpace && !d->atWordSeparator(oldPos))
+                 oldPos++;
+         }
+-        while (oldPos < len && attributes[oldPos].whiteSpace)
+-            oldPos++;
++        // Patch: Skip to the end of the current word, not to the start of the next one.
++        //while (oldPos < len && attributes[oldPos].whiteSpace)
++        //    oldPos++;
+     }
+ 
+     return oldPos;
+@@ -1651,6 +1655,9 @@
+         int currentPosition;
+         glyph_t previousGlyph;
+ 
++        // Patch: Fix a crash in right bearing calculation.
++        QFontEngine *previousGlyphFontEngine;
++
+         QFixed minw;
+         QFixed softHyphenWidth;
+         QFixed rightBearing;
+@@ -1683,13 +1690,19 @@
+             if (currentPosition > 0 &&
+                 logClusters[currentPosition - 1] < glyphs.numGlyphs) {
+                 previousGlyph = currentGlyph(); // needed to calculate right bearing later
++
++                // Patch: Fix a crash in right bearing calculation.
++                previousGlyphFontEngine = fontEngine;
+             }
+         }
+ 
+-        inline void calculateRightBearing(glyph_t glyph)
++        // Patch: Fix a crash in right bearing calculation.
++        inline void calculateRightBearing(QFontEngine *engine, glyph_t glyph)
+         {
+             qreal rb;
+-            fontEngine->getGlyphBearings(glyph, 0, &rb);
++
++            // Patch: Fix a crash in right bearing calculation.
++            engine->getGlyphBearings(glyph, 0, &rb);
+ 
+             // We only care about negative right bearings, so we limit the range
+             // of the bearing here so that we can assume it's negative in the rest
+@@ -1702,13 +1715,16 @@
+         {
+             if (currentPosition <= 0)
+                 return;
+-            calculateRightBearing(currentGlyph());
++
++            // Patch: Fix a crash in right bearing calculation.
++            calculateRightBearing(fontEngine, currentGlyph());
+         }
+ 
+         inline void calculateRightBearingForPreviousGlyph()
+         {
+             if (previousGlyph > 0)
+-                calculateRightBearing(previousGlyph);
++                // Patch: Fix a crash in right bearing calculation.
++                calculateRightBearing(previousGlyphFontEngine, previousGlyph);
+         }
+ 
+         static const QFixed RightBearingNotCalculated;
+diff -urN qtbase-opensource-src-5.7.1-orig/src/gui/text/qtextlayout.h qtbase-opensource-src-5.7.1/src/gui/text/qtextlayout.h
+--- qtbase-opensource-src-5.7.1-orig/src/gui/text/qtextlayout.h	2016-12-01 11:17:04.000000000 +0300
++++ qtbase-opensource-src-5.7.1/src/gui/text/qtextlayout.h	2017-04-30 12:10:24.861757698 +0300
+@@ -202,6 +202,9 @@
+                                QRectF *brect, int tabstops, int* tabarray, int tabarraylen,
+                                QPainter *painter);
+     QTextEngine *d;
++
++    // Patch: Allow access to private constructor.
++    friend class TextBlock;
+ };
+ Q_DECLARE_TYPEINFO(QTextLayout::FormatRange, Q_RELOCATABLE_TYPE);
+ 
+diff -urN qtbase-opensource-src-5.7.1-orig/src/network/socket/qnativesocketengine_win.cpp qtbase-opensource-src-5.7.1/src/network/socket/qnativesocketengine_win.cpp
+--- qtbase-opensource-src-5.7.1-orig/src/network/socket/qnativesocketengine_win.cpp	2016-12-01 11:17:04.000000000 +0300
++++ qtbase-opensource-src-5.7.1/src/network/socket/qnativesocketengine_win.cpp	2017-04-30 12:10:24.861757698 +0300
+@@ -684,6 +684,13 @@
+                             errorDetected = true;
+                             break;
+                         }
++                        // Patch: Handle network unreachable the same as host unreachable.
++                        if (value == WSAENETUNREACH) {
++                            setError(QAbstractSocket::NetworkError, NetworkUnreachableErrorString);
++                            socketState = QAbstractSocket::UnconnectedState;
++                            errorDetected = true;
++                            break;
++                        }
+                         if (value == WSAEADDRNOTAVAIL) {
+                             setError(QAbstractSocket::NetworkError, AddressNotAvailableErrorString);
+                             socketState = QAbstractSocket::UnconnectedState;
+diff -urN qtbase-opensource-src-5.7.1-orig/src/platformsupport/fontdatabases/basic/qbasicfontdatabase.cpp qtbase-opensource-src-5.7.1/src/platformsupport/fontdatabases/basic/qbasicfontdatabase.cpp
+--- qtbase-opensource-src-5.7.1-orig/src/platformsupport/fontdatabases/basic/qbasicfontdatabase.cpp	2016-12-01 11:17:04.000000000 +0300
++++ qtbase-opensource-src-5.7.1/src/platformsupport/fontdatabases/basic/qbasicfontdatabase.cpp	2017-04-30 12:10:24.862757711 +0300
+@@ -179,6 +179,79 @@
+ 
+ extern FT_Library qt_getFreetype();
+ 
++// Patch: Enable Open Sans Semibold font family reading.
++// Copied from freetype with some modifications.
++
++#ifndef FT_PARAM_TAG_IGNORE_PREFERRED_FAMILY
++#define FT_PARAM_TAG_IGNORE_PREFERRED_FAMILY FT_MAKE_TAG('i', 'g', 'p', 'f')
++#endif
++
++#ifndef FT_PARAM_TAG_IGNORE_PREFERRED_SUBFAMILY
++#define FT_PARAM_TAG_IGNORE_PREFERRED_SUBFAMILY FT_MAKE_TAG('i', 'g', 'p', 's')
++#endif
++
++/* there's a Mac-specific extended implementation of FT_New_Face() */
++/* in src/base/ftmac.c                                             */
++
++#if !defined( FT_MACINTOSH ) || defined( DARWIN_NO_CARBON )
++
++/* documentation is in freetype.h */
++
++FT_Error __ft_New_Face(FT_Library library, const char* pathname, FT_Long face_index, FT_Face *aface) {
++    FT_Open_Args args;
++
++    /* test for valid `library' and `aface' delayed to FT_Open_Face() */
++    if (!pathname)
++        return FT_Err_Invalid_Argument;
++
++    FT_Parameter params[2];
++    params[0].tag = FT_PARAM_TAG_IGNORE_PREFERRED_FAMILY;
++    params[0].data = 0;
++    params[1].tag = FT_PARAM_TAG_IGNORE_PREFERRED_SUBFAMILY;
++    params[1].data = 0;
++    args.flags = FT_OPEN_PATHNAME | FT_OPEN_PARAMS;
++    args.pathname = (char*)pathname;
++    args.stream = NULL;
++    args.num_params = 2;
++    args.params = params;
++
++    return FT_Open_Face(library, &args, face_index, aface);
++}
++
++#else
++
++FT_Error __ft_New_Face(FT_Library library, const char* pathname, FT_Long face_index, FT_Face *aface) {
++    return FT_New_Face(library, pathname, face_index, aface);
++}
++
++#endif  /* defined( FT_MACINTOSH ) && !defined( DARWIN_NO_CARBON ) */
++
++/* documentation is in freetype.h */
++
++FT_Error __ft_New_Memory_Face(FT_Library library, const FT_Byte* file_base, FT_Long file_size, FT_Long face_index, FT_Face *aface) {
++    FT_Open_Args  args;
++
++    /* test for valid `library' and `face' delayed to FT_Open_Face() */
++    if (!file_base)
++        return FT_Err_Invalid_Argument;
++
++    FT_Parameter params[2];
++    params[0].tag = FT_PARAM_TAG_IGNORE_PREFERRED_FAMILY;
++    params[0].data = 0;
++    params[1].tag = FT_PARAM_TAG_IGNORE_PREFERRED_SUBFAMILY;
++    params[1].data = 0;
++    args.flags = FT_OPEN_MEMORY | FT_OPEN_PARAMS;
++    args.memory_base = file_base;
++    args.memory_size = file_size;
++    args.stream = NULL;
++    args.num_params = 2;
++    args.params = params;
++
++    return FT_Open_Face(library, &args, face_index, aface);
++}
++
++// end
++
+ QStringList QBasicFontDatabase::addTTFile(const QByteArray &fontData, const QByteArray &file)
+ {
+     FT_Library library = qt_getFreetype();
+@@ -190,9 +263,11 @@
+         FT_Face face;
+         FT_Error error;
+         if (!fontData.isEmpty()) {
+-            error = FT_New_Memory_Face(library, (const FT_Byte *)fontData.constData(), fontData.size(), index, &face);
++            // Patch: Enable Open Sans Semibold font family reading.
++            error = __ft_New_Memory_Face(library, (const FT_Byte *)fontData.constData(), fontData.size(), index, &face);
+         } else {
+-            error = FT_New_Face(library, file.constData(), index, &face);
++            // Patch: Enable Open Sans Semibold font family reading.
++            error = __ft_New_Face(library, file.constData(), index, &face);
+         }
+         if (error != FT_Err_Ok) {
+             qDebug() << "FT_New_Face failed with index" << index << ':' << hex << error;
+diff -urN qtbase-opensource-src-5.7.1-orig/src/platformsupport/fontdatabases/fontconfig/qfontconfigdatabase.cpp qtbase-opensource-src-5.7.1/src/platformsupport/fontdatabases/fontconfig/qfontconfigdatabase.cpp
+--- qtbase-opensource-src-5.7.1-orig/src/platformsupport/fontdatabases/fontconfig/qfontconfigdatabase.cpp	2016-12-01 11:17:04.000000000 +0300
++++ qtbase-opensource-src-5.7.1/src/platformsupport/fontdatabases/fontconfig/qfontconfigdatabase.cpp	2017-04-30 12:10:24.863757724 +0300
+@@ -392,6 +392,17 @@
+     if (FcPatternGetString(pattern, FC_FAMILYLANG, 0, &value) == FcResultMatch)
+         familyNameLang = QString::fromUtf8((const char *)value);
+ 
++    // Patch: Enable Open Sans Semibold font family reading.
++    if (familyName == QLatin1String("Open Sans")) {
++        FcChar8 *styl = 0;
++        if (FcPatternGetString(pattern, FC_STYLE, 0, &styl) == FcResultMatch) {
++            QString style = QString::fromUtf8(reinterpret_cast<const char *>(styl));
++            if (style == QLatin1String("Semibold")) {
++                familyName.append(QChar(QChar::Space)).append(style);
++            }
++        }
++    }
++
+     slant_value = FC_SLANT_ROMAN;
+     weight_value = FC_WEIGHT_REGULAR;
+     spacing_value = FC_PROPORTIONAL;
+@@ -757,7 +768,19 @@
+             if (FcPatternGetString(fontSet->fonts[i], FC_FAMILY, 0, &value) != FcResultMatch)
+                 continue;
+             //         capitalize(value);
+-            const QString familyName = QString::fromUtf8((const char *)value);
++
++            // Patch: Enable Open Sans Semibold font family reading.
++            QString familyName = QString::fromUtf8((const char *)value);
++            if (familyName == QLatin1String("Open Sans")) {
++                FcChar8 *styl = 0;
++                if (FcPatternGetString(fontSet->fonts[i], FC_STYLE, 0, &styl) == FcResultMatch) {
++                    QString style = QString::fromUtf8(reinterpret_cast<const char *>(styl));
++                    if (style == QLatin1String("Semibold")) {
++                        familyName.append(QChar(QChar::Space)).append(style);
++                    }
++                }
++            }
++
+             const QString familyNameCF = familyName.toCaseFolded();
+             if (!duplicates.contains(familyNameCF)) {
+                 fallbackFamilies << familyName;
+@@ -823,6 +846,18 @@
+         FcChar8 *fam = 0;
+         if (FcPatternGetString(pattern, FC_FAMILY, 0, &fam) == FcResultMatch) {
+             QString family = QString::fromUtf8(reinterpret_cast<const char *>(fam));
++
++            // Patch: Enable Open Sans Semibold font family reading.
++            if (family == QLatin1String("Open Sans")) {
++                FcChar8 *styl = 0;
++                if (FcPatternGetString(pattern, FC_STYLE, 0, &styl) == FcResultMatch) {
++                    QString style = QString::fromUtf8(reinterpret_cast<const char *>(styl));
++                    if (style == QLatin1String("Semibold")) {
++                        family.append(QChar(QChar::Space)).append(style);
++                    }
++                }
++            }
++
+             families << family;
+         }
+         populateFromPattern(pattern);
+diff -urN qtbase-opensource-src-5.7.1-orig/src/platformsupport/fontdatabases/mac/qcoretextfontdatabase.mm qtbase-opensource-src-5.7.1/src/platformsupport/fontdatabases/mac/qcoretextfontdatabase.mm
+--- qtbase-opensource-src-5.7.1-orig/src/platformsupport/fontdatabases/mac/qcoretextfontdatabase.mm	2016-12-01 11:17:04.000000000 +0300
++++ qtbase-opensource-src-5.7.1/src/platformsupport/fontdatabases/mac/qcoretextfontdatabase.mm	2017-04-30 12:10:24.864757737 +0300
+@@ -271,6 +271,13 @@
+ 
+     fd->foundryName = QStringLiteral("CoreText");
+     fd->familyName = (CFStringRef) CTFontDescriptorCopyAttribute(font, kCTFontFamilyNameAttribute);
++
++    // Patch: Enable Open Sans Semibold font family reading.
++    QCFString _displayName = (CFStringRef) CTFontDescriptorCopyAttribute(font, kCTFontDisplayNameAttribute);
++    if (_displayName == QStringLiteral("Open Sans Semibold")) {
++        fd->familyName = _displayName;
++    }
++
+     fd->styleName = (CFStringRef)CTFontDescriptorCopyAttribute(font, kCTFontStyleNameAttribute);
+     fd->weight = QFont::Normal;
+     fd->style = QFont::StyleNormal;
+diff -urN qtbase-opensource-src-5.7.1-orig/src/plugins/platforminputcontexts/compose/qcomposeplatforminputcontext.cpp qtbase-opensource-src-5.7.1/src/plugins/platforminputcontexts/compose/qcomposeplatforminputcontext.cpp
+--- qtbase-opensource-src-5.7.1-orig/src/plugins/platforminputcontexts/compose/qcomposeplatforminputcontext.cpp	2016-12-01 11:17:04.000000000 +0300
++++ qtbase-opensource-src-5.7.1/src/plugins/platforminputcontexts/compose/qcomposeplatforminputcontext.cpp	2017-04-30 12:10:24.864757737 +0300
+@@ -246,6 +246,12 @@
+ 
+ void QComposeInputContext::commitText(uint character) const
+ {
++    // Patch: Crash fix when not focused widget still receives input events.
++    if (!m_focusObject) {
++        qWarning("QComposeInputContext::commitText: m_focusObject == nullptr, cannot commit text");
++        return;
++    }
++
+     QInputMethodEvent event;
+     event.setCommitString(QChar(character));
+     QCoreApplication::sendEvent(m_focusObject, &event);
+diff -urN qtbase-opensource-src-5.7.1-orig/src/plugins/platforms/cocoa/qcocoaapplicationdelegate.mm qtbase-opensource-src-5.7.1/src/plugins/platforms/cocoa/qcocoaapplicationdelegate.mm
+--- qtbase-opensource-src-5.7.1-orig/src/plugins/platforms/cocoa/qcocoaapplicationdelegate.mm	2016-12-01 11:17:04.000000000 +0300
++++ qtbase-opensource-src-5.7.1/src/plugins/platforms/cocoa/qcocoaapplicationdelegate.mm	2017-04-30 12:10:24.887758034 +0300
+@@ -216,7 +216,8 @@
+     if (reflectionDelegate) {
+         if ([reflectionDelegate respondsToSelector:@selector(applicationShouldTerminate:)])
+             return [reflectionDelegate applicationShouldTerminate:sender];
+-        return NSTerminateNow;
++        // Patch: Don't terminate if reflectionDelegate does not respond to that selector, just use the default.
++        //return NSTerminateNow;
+     }
+ 
+     if ([self canQuit]) {
+@@ -293,11 +294,15 @@
+ 
+ - (void)applicationDidFinishLaunching:(NSNotification *)aNotification
+ {
++    // Patch: We need to catch that notification in delegate.
++    if (reflectionDelegate
++        && [reflectionDelegate respondsToSelector:@selector(applicationDidFinishLaunching:)])
++        [reflectionDelegate applicationDidFinishLaunching:aNotification];
++
+     Q_UNUSED(aNotification);
+     inLaunch = false;
+     // qt_release_apple_event_handler();
+ 
+-
+     // Insert code here to initialize your application
+ }
+ 
+diff -urN qtbase-opensource-src-5.7.1-orig/src/plugins/platforms/cocoa/qcocoabackingstore.h qtbase-opensource-src-5.7.1/src/plugins/platforms/cocoa/qcocoabackingstore.h
+--- qtbase-opensource-src-5.7.1-orig/src/plugins/platforms/cocoa/qcocoabackingstore.h	2016-12-01 11:17:04.000000000 +0300
++++ qtbase-opensource-src-5.7.1/src/plugins/platforms/cocoa/qcocoabackingstore.h	2017-04-30 12:10:24.887758034 +0300
+@@ -70,6 +70,9 @@
+ private:
+     QImage m_qImage;
+     QSize m_requestedSize;
++
++    // Patch: Optimize redraw - don't clear image if it will be fully redrawn.
++    bool m_qImageNeedsClear;
+ };
+ 
+ QT_END_NAMESPACE
+diff -urN qtbase-opensource-src-5.7.1-orig/src/plugins/platforms/cocoa/qcocoabackingstore.mm qtbase-opensource-src-5.7.1/src/plugins/platforms/cocoa/qcocoabackingstore.mm
+--- qtbase-opensource-src-5.7.1-orig/src/plugins/platforms/cocoa/qcocoabackingstore.mm	2016-12-01 11:17:04.000000000 +0300
++++ qtbase-opensource-src-5.7.1/src/plugins/platforms/cocoa/qcocoabackingstore.mm	2017-04-30 12:10:24.887758034 +0300
+@@ -44,7 +44,8 @@
+ QT_BEGIN_NAMESPACE
+ 
+ QCocoaBackingStore::QCocoaBackingStore(QWindow *window)
+-    : QPlatformBackingStore(window)
++    // Patch: Optimize redraw - don't clear image if it will be fully redrawn.
++    : QPlatformBackingStore(window), m_qImageNeedsClear(false)
+ {
+ }
+ 
+@@ -65,9 +66,12 @@
+     if (m_qImage.size() != effectiveBufferSize) {
+         QImage::Format format = (window()->format().hasAlpha() || cocoaWindow->m_drawContentBorderGradient)
+                 ? QImage::Format_ARGB32_Premultiplied : QImage::Format_RGB32;
++
++        // Patch: Optimize redraw - don't clear image if it will be fully redrawn.
++        m_qImageNeedsClear = window()->requestedFormat().hasAlpha() || cocoaWindow->m_drawContentBorderGradient;
+         m_qImage = QImage(effectiveBufferSize, format);
+         m_qImage.setDevicePixelRatio(windowDevicePixelRatio);
+-        if (format == QImage::Format_ARGB32_Premultiplied)
++        if (m_qImageNeedsClear)
+             m_qImage.fill(Qt::transparent);
+     }
+     return &m_qImage;
+@@ -106,7 +110,8 @@
+ 
+ void QCocoaBackingStore::beginPaint(const QRegion &region)
+ {
+-    if (m_qImage.hasAlphaChannel()) {
++    // Patch: Optimize redraw - don't clear image if it will be fully redrawn.
++    if (m_qImageNeedsClear && m_qImage.hasAlphaChannel()) {
+         QPainter p(&m_qImage);
+         p.setCompositionMode(QPainter::CompositionMode_Source);
+         const QVector<QRect> rects = region.rects();
+diff -urN qtbase-opensource-src-5.7.1-orig/src/plugins/platforms/cocoa/qcocoasystemtrayicon.mm qtbase-opensource-src-5.7.1/src/plugins/platforms/cocoa/qcocoasystemtrayicon.mm
+--- qtbase-opensource-src-5.7.1-orig/src/plugins/platforms/cocoa/qcocoasystemtrayicon.mm	2016-12-01 11:17:04.000000000 +0300
++++ qtbase-opensource-src-5.7.1/src/plugins/platforms/cocoa/qcocoasystemtrayicon.mm	2017-04-30 12:10:24.888758047 +0300
+@@ -100,6 +100,8 @@
+     QCocoaSystemTrayIcon *systray;
+     NSStatusItem *item;
+     QCocoaMenu *menu;
++    // Patch: Create a rich os x tray icon (pixel-perfect, theme switching).
++    bool menuVisible, iconSelected;
+     QIcon icon;
+     QT_MANGLE_NAMESPACE(QNSImageView) *imageCell;
+ }
+@@ -203,7 +205,9 @@
+     // (device independent pixels). The menu height on past and
+     // current OS X versions is 22 points. Provide some future-proofing
+     // by deriving the icon height from the menu height.
+-    const int padding = 4;
++
++    // Patch: Create a rich os x tray icon (pixel-perfect, theme switching).
++    const int padding = 0;
+     const int menuHeight = [[NSStatusBar systemStatusBar] thickness];
+     const int maxImageHeight = menuHeight - padding;
+ 
+@@ -213,8 +217,11 @@
+     // devicePixelRatio for the "best" screen on the system.
+     qreal devicePixelRatio = qApp->devicePixelRatio();
+     const int maxPixmapHeight = maxImageHeight * devicePixelRatio;
++
++    // Patch: Create a rich os x tray icon (pixel-perfect, theme switching).
++    const QIcon::Mode mode = m_sys->item->iconSelected ? QIcon::Selected : QIcon::Normal;
+     QSize selectedSize;
+-    Q_FOREACH (const QSize& size, sortByHeight(icon.availableSizes())) {
++    Q_FOREACH (const QSize& size, sortByHeight(icon.availableSizes(mode))) {
+         // Select a pixmap based on the height. We want the largest pixmap
+         // with a height smaller or equal to maxPixmapHeight. The pixmap
+         // may rectangular; assume it has a reasonable size. If there is
+@@ -230,9 +237,9 @@
+ 
+     // Handle SVG icons, which do not return anything for availableSizes().
+     if (!selectedSize.isValid())
+-        selectedSize = icon.actualSize(QSize(maxPixmapHeight, maxPixmapHeight));
++        selectedSize = icon.actualSize(QSize(maxPixmapHeight, maxPixmapHeight), mode);
+ 
+-    QPixmap pixmap = icon.pixmap(selectedSize);
++    QPixmap pixmap = icon.pixmap(selectedSize, mode);
+ 
+     // Draw a low-resolution icon if there is not enough pixels for a retina
+     // icon. This prevents showing a small icon on retina displays.
+@@ -380,6 +387,11 @@
+     Q_UNUSED(notification);
+     down = NO;
+ 
++    // Patch: Create a rich os x tray icon (pixel-perfect, theme switching).
++    parent->iconSelected = false;
++    parent->systray->updateIcon(parent->icon);
++    parent->menuVisible = false;
++
+     [self setNeedsDisplay:YES];
+ }
+ 
+@@ -389,6 +401,10 @@
+     int clickCount = [mouseEvent clickCount];
+     [self setNeedsDisplay:YES];
+ 
++    // Patch: Create a rich os x tray icon (pixel-perfect, theme switching).
++    parent->iconSelected = (clickCount != 2) && parent->menu;
++    parent->systray->updateIcon(parent->icon);
++
+     if (clickCount == 2) {
+         [self menuTrackingDone:nil];
+         [parent doubleClickSelector:self];
+@@ -405,6 +421,11 @@
+ -(void)mouseUp:(NSEvent *)mouseEvent
+ {
+     Q_UNUSED(mouseEvent);
++
++    // Patch: Create a rich os x tray icon (pixel-perfect, theme switching).
++    parent->iconSelected = false;
++    parent->systray->updateIcon(parent->icon);
++
+     [self menuTrackingDone:nil];
+ }
+ 
+@@ -416,6 +437,11 @@
+ -(void)rightMouseUp:(NSEvent *)mouseEvent
+ {
+     Q_UNUSED(mouseEvent);
++
++    // Patch: Create a rich os x tray icon (pixel-perfect, theme switching).
++    parent->iconSelected = false;
++    parent->systray->updateIcon(parent->icon);
++
+     [self menuTrackingDone:nil];
+ }
+ 
+@@ -431,7 +457,8 @@
+ }
+ 
+ -(void)drawRect:(NSRect)rect {
+-    [[parent item] drawStatusBarBackgroundInRect:rect withHighlight:down];
++    // Patch: Create a rich os x tray icon (pixel-perfect, theme switching).
++    [[parent item] drawStatusBarBackgroundInRect:rect withHighlight:parent->menu ? down : NO];
+     [super drawRect:rect];
+ }
+ @end
+@@ -444,6 +471,10 @@
+     if (self) {
+         item = [[[NSStatusBar systemStatusBar] statusItemWithLength:NSSquareStatusItemLength] retain];
+         menu = 0;
++
++        // Patch: Create a rich os x tray icon (pixel-perfect, theme switching).
++        menuVisible = false;
++
+         systray = sys;
+         imageCell = [[QNSImageView alloc] initWithParent:self];
+         [item setView: imageCell];
+@@ -488,6 +519,10 @@
+          selector:@selector(menuTrackingDone:)
+              name:NSMenuDidEndTrackingNotification
+                  object:m];
++
++        // Patch: Create a rich os x tray icon (pixel-perfect, theme switching).
++        menuVisible = true;
++
+         [item popUpStatusItemMenu: m];
+     }
+ }
+diff -urN qtbase-opensource-src-5.7.1-orig/src/plugins/platforms/cocoa/qcocoawindow.mm qtbase-opensource-src-5.7.1/src/plugins/platforms/cocoa/qcocoawindow.mm
+--- qtbase-opensource-src-5.7.1-orig/src/plugins/platforms/cocoa/qcocoawindow.mm	2016-12-01 11:17:04.000000000 +0300
++++ qtbase-opensource-src-5.7.1/src/plugins/platforms/cocoa/qcocoawindow.mm	2017-04-30 12:10:24.889758060 +0300
+@@ -146,7 +146,8 @@
+     if (!self.window.delegate)
+         return; // Already detached, pending NSAppKitDefined event
+ 
+-    if (pw && pw->frameStrutEventsEnabled() && isMouseEvent(theEvent)) {
++    // Patch: Fix restore after minimize or close by window buttons.
++    if (pw && pw->frameStrutEventsEnabled() && pw->m_synchedWindowState != Qt::WindowMinimized && pw->m_isExposed && isMouseEvent(theEvent)) {
+         NSPoint loc = [theEvent locationInWindow];
+         NSRect windowFrame = [self.window convertRectFromScreen:[self.window frame]];
+         NSRect contentFrame = [[self.window contentView] frame];
+@@ -952,6 +953,19 @@
+     [m_nsWindow setRepresentedFilename: fi.exists() ? QCFString::toNSString(filePath) : @""];
+ }
+ 
++// Patch: Create a good os x window icon (pixel-perfect).
++namespace {
++
++qreal getDevicePixelRatio() {
++    qreal result = 1.0;
++    foreach (QScreen *screen, QGuiApplication::screens()) {
++        result = qMax(result, screen->devicePixelRatio());
++    }
++    return result;
++}
++
++} // namespace
++
+ void QCocoaWindow::setWindowIcon(const QIcon &icon)
+ {
+     QMacAutoReleasePool pool;
+@@ -967,7 +981,9 @@
+     if (icon.isNull()) {
+         [iconButton setImage:nil];
+     } else {
+-        QPixmap pixmap = icon.pixmap(QSize(22, 22));
++        // Patch: Create a good os x window icon (pixel-perfect).
++        CGFloat hgt = 16. * getDevicePixelRatio();
++        QPixmap pixmap = icon.pixmap(QSize(hgt, hgt));
+         NSImage *image = static_cast<NSImage *>(qt_mac_create_nsimage(pixmap));
+         [iconButton setImage:image];
+         [image release];
+diff -urN qtbase-opensource-src-5.7.1-orig/src/plugins/platforms/cocoa/qnsview.mm qtbase-opensource-src-5.7.1/src/plugins/platforms/cocoa/qnsview.mm
+--- qtbase-opensource-src-5.7.1-orig/src/plugins/platforms/cocoa/qnsview.mm	2016-12-01 11:17:04.000000000 +0300
++++ qtbase-opensource-src-5.7.1/src/plugins/platforms/cocoa/qnsview.mm	2017-04-30 12:10:24.890758072 +0300
+@@ -1531,7 +1531,9 @@
+ #if MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_8
+     if (QSysInfo::QSysInfo::MacintoshVersion >= QSysInfo::MV_10_8) {
+         // On 10.8 and above, MayBegin is likely to happen.  We treat it the same as an actual begin.
+-        if (phase == NSEventPhaseMayBegin) {
++
++        // Patch: Fix actual begin handle of swipe on trackpad.
++        if (phase == NSEventPhaseMayBegin || phase == NSEventPhaseBegan) {
+             m_scrolling = true;
+             ph = Qt::ScrollBegin;
+         }
+@@ -1596,14 +1598,14 @@
+     quint32 nativeVirtualKey = [nsevent keyCode];
+ 
+     QChar ch = QChar::ReplacementCharacter;
+-    int keyCode = Qt::Key_unknown;
+-    if ([characters length] != 0) {
+-        if (((modifiers & Qt::MetaModifier) || (modifiers & Qt::AltModifier)) && ([charactersIgnoringModifiers length] != 0))
+-            ch = QChar([charactersIgnoringModifiers characterAtIndex:0]);
+-        else
+-            ch = QChar([characters characterAtIndex:0]);
+-        keyCode = [self convertKeyCode:ch];
+-    }
++
++    // Patch: Fix Alt+.. shortcuts in OS X. See https://bugreports.qt.io/browse/QTBUG-42584 at the end.
++    if ([characters length] != 0)
++        ch = QChar([characters characterAtIndex:0]);
++    else if ([charactersIgnoringModifiers length] != 0 && ((modifiers & Qt::MetaModifier) || (modifiers & Qt::AltModifier)))
++        ch = QChar([charactersIgnoringModifiers characterAtIndex:0]);
++
++    int keyCode = [self convertKeyCode:ch];
+ 
+     // we will send a key event unless the input method sets m_sendKeyEvent to false
+     m_sendKeyEvent = true;
+@@ -1695,6 +1697,23 @@
+         [super keyUp:nsevent];
+ }
+ 
++// Patch: Enable Ctrl+Tab and Ctrl+Shift+Tab / Ctrl+Backtab handle in-app.
++- (BOOL)performKeyEquivalent:(NSEvent *)nsevent
++{
++    NSString *chars = [nsevent charactersIgnoringModifiers];
++
++    if ([nsevent type] == NSKeyDown && [chars length] > 0) {
++        QChar ch = [chars characterAtIndex:0];
++        Qt::Key qtKey = qt_mac_cocoaKey2QtKey(ch);
++        if ([nsevent modifierFlags] & NSControlKeyMask
++                && (qtKey == Qt::Key_Tab || qtKey == Qt::Key_Backtab)) {
++            [self handleKeyEvent:nsevent eventType:int(QEvent::KeyPress)];
++            return YES;
++        }
++    }
++    return [super performKeyEquivalent:nsevent];
++}
++
+ - (void)cancelOperation:(id)sender
+ {
+     Q_UNUSED(sender);
+diff -urN qtbase-opensource-src-5.7.1-orig/src/plugins/platforms/windows/qwindowsdialoghelpers.cpp qtbase-opensource-src-5.7.1/src/plugins/platforms/windows/qwindowsdialoghelpers.cpp
+--- qtbase-opensource-src-5.7.1-orig/src/plugins/platforms/windows/qwindowsdialoghelpers.cpp	2016-12-01 11:17:04.000000000 +0300
++++ qtbase-opensource-src-5.7.1/src/plugins/platforms/windows/qwindowsdialoghelpers.cpp	2017-04-30 12:10:24.890758072 +0300
+@@ -722,12 +722,20 @@
+     void setSelectedFiles(const QList<QUrl> &);
+     QString selectedFile() const;
+ 
++    // Patch: Adding select-by-url for Windows file dialog.
++    void setSelectedRemoteContent(const QByteArray &);
++    QByteArray selectedRemoteContent() const;
++
+ private:
+     class Data : public QSharedData {
+     public:
+         QUrl directory;
+         QString selectedNameFilter;
+         QList<QUrl> selectedFiles;
++
++        // Patch: Adding select-by-url for Windows file dialog.
++        QByteArray selectedRemoteContent;
++
+         QMutex mutex;
+     };
+     QExplicitlySharedDataPointer<Data> m_data;
+@@ -781,6 +789,21 @@
+     m_data->selectedFiles = urls;
+ }
+ 
++// Patch: Adding select-by-url for Windows file dialog.
++inline QByteArray QWindowsFileDialogSharedData::selectedRemoteContent() const
++{
++    m_data->mutex.lock();
++    const QByteArray result = m_data->selectedRemoteContent;
++    m_data->mutex.unlock();
++    return result;
++}
++
++inline void QWindowsFileDialogSharedData::setSelectedRemoteContent(const QByteArray &c)
++{
++    QMutexLocker(&m_data->mutex);
++    m_data->selectedRemoteContent = c;
++}
++
+ inline void QWindowsFileDialogSharedData::fromOptions(const QSharedPointer<QFileDialogOptions> &o)
+ {
+     QMutexLocker locker(&m_data->mutex);
+@@ -905,6 +928,9 @@
+     // example by appended default suffixes, etc.
+     virtual QList<QUrl> dialogResult() const = 0;
+ 
++    // Patch: Adding select-by-url for Windows file dialog.
++    virtual QByteArray dialogRemoteContent() const { return QByteArray(); }
++
+     inline void onFolderChange(IShellItem *);
+     inline void onSelectionChange();
+     inline void onTypeChange();
+@@ -1344,7 +1370,14 @@
+     // Hack to prevent CLSIDs from being set as file name due to
+     // QFileDialogPrivate::initialSelection() being QString-based.
+     if (!isClsid(fileName))
+-        m_fileDialog->SetFileName((wchar_t*)fileName.utf16());
++    // Patch: Fix handle of full fileName.
++    {
++        QString file = QDir::toNativeSeparators(fileName);
++        int lastBackSlash = file.lastIndexOf(QChar::fromLatin1('\\'));
++        if (lastBackSlash >= 0)
++            file = file.mid(lastBackSlash + 1);
++        m_fileDialog->SetFileName((wchar_t*)file.utf16());;
++    }
+ }
+ 
+ // Return the index of the selected filter, accounting for QFileDialog
+@@ -1414,6 +1447,10 @@
+ {
+     // Store selected files as GetResults() returns invalid data after the dialog closes.
+     m_data.setSelectedFiles(dialogResult());
++
++    // Patch: Adding select-by-url for Windows file dialog.
++    m_data.setSelectedRemoteContent(dialogRemoteContent());
++
+     return true;
+ }
+ 
+@@ -1548,6 +1585,9 @@
+     QList<QUrl> selectedFiles() const Q_DECL_OVERRIDE;
+     QList<QUrl> dialogResult() const Q_DECL_OVERRIDE;
+ 
++    // Patch: Adding select-by-url for Windows file dialog.
++    QByteArray dialogRemoteContent() const Q_DECL_OVERRIDE;
++
+ private:
+     inline IFileOpenDialog *openFileDialog() const
+         { return static_cast<IFileOpenDialog *>(fileDialog()); }
+@@ -1562,6 +1602,62 @@
+     return result;
+ }
+ 
++// Patch: Adding select-by-url for Windows file dialog.
++QByteArray QWindowsNativeOpenFileDialog::dialogRemoteContent() const
++{
++    QByteArray result;
++    IShellItemArray *items = 0;
++    if (FAILED(openFileDialog()->GetResults(&items)) || !items)
++        return result;
++    DWORD itemCount = 0;
++    if (FAILED(items->GetCount(&itemCount)) || !itemCount)
++        return result;
++    for (DWORD i = 0; i < itemCount; ++i)
++    {
++        IShellItem *item = 0;
++        if (SUCCEEDED(items->GetItemAt(i, &item))) {
++            SFGAOF attributes = 0;
++            // Check whether it has a file system representation?
++            if (FAILED(item->GetAttributes(SFGAO_FILESYSTEM, &attributes)) || (attributes & SFGAO_FILESYSTEM))
++            {
++                LPWSTR name = 0;
++                if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &name)))
++                {
++                    CoTaskMemFree(name);
++                    continue;
++                }
++            }
++            if (FAILED(item->GetAttributes(SFGAO_STREAM, &attributes)) || !(attributes & SFGAO_STREAM))
++                continue;
++
++            IBindCtx *bind = 0;
++            if (FAILED(CreateBindCtx(0, &bind)))
++                continue;
++
++            IStream *stream = 0;
++            if (FAILED(item->BindToHandler(bind, BHID_Stream, IID_IStream, reinterpret_cast<void **>(&stream))))
++                continue;
++
++            STATSTG stat = { 0 };
++            if (FAILED(stream->Stat(&stat, STATFLAG_NONAME)) || !stat.cbSize.QuadPart)
++                continue;
++
++            quint64 fullSize = stat.cbSize.QuadPart;
++            if (fullSize <= 64 * 1024 * 1024)
++            {
++                result.resize(fullSize);
++                ULONG read = 0;
++                HRESULT r = stream->Read(result.data(), fullSize, &read);
++                if (r == S_FALSE || r == S_OK)
++                    return result;
++
++                result.clear();
++            }
++        }
++    }
++    return result;
++}
++
+ QList<QUrl> QWindowsNativeOpenFileDialog::selectedFiles() const
+ {
+     QList<QUrl> result;
+@@ -1620,6 +1716,10 @@
+     virtual QUrl directory() const Q_DECL_OVERRIDE;
+     virtual void selectFile(const QUrl &filename) Q_DECL_OVERRIDE;
+     virtual QList<QUrl> selectedFiles() const Q_DECL_OVERRIDE;
++
++    // Patch: Adding select-by-url for Windows file dialog.
++    virtual QByteArray selectedRemoteContent() const Q_DECL_OVERRIDE;
++
+     virtual void setFilter() Q_DECL_OVERRIDE;
+     virtual void selectNameFilter(const QString &filter) Q_DECL_OVERRIDE;
+     virtual QString selectedNameFilter() const Q_DECL_OVERRIDE;
+@@ -1713,6 +1813,12 @@
+     return m_data.selectedFiles();
+ }
+ 
++// Patch: Adding select-by-url for Windows file dialog.
++QByteArray QWindowsFileDialogHelper::selectedRemoteContent() const
++{
++    return m_data.selectedRemoteContent();
++}
++
+ void QWindowsFileDialogHelper::setFilter()
+ {
+     qCDebug(lcQpaDialogs) << __FUNCTION__;
+@@ -2002,6 +2108,10 @@
+     QUrl directory() const Q_DECL_OVERRIDE;
+     void selectFile(const QUrl &url) Q_DECL_OVERRIDE;
+     QList<QUrl> selectedFiles() const Q_DECL_OVERRIDE;
++
++    // Patch: Adding select-by-url for Windows file dialog.
++    QByteArray selectedRemoteContent() const Q_DECL_OVERRIDE;
++
+     void setFilter() Q_DECL_OVERRIDE {}
+     void selectNameFilter(const QString &) Q_DECL_OVERRIDE;
+     QString selectedNameFilter() const Q_DECL_OVERRIDE;
+@@ -2045,6 +2155,12 @@
+     return m_data.selectedFiles();
+ }
+ 
++// Patch: Adding select-by-url for Windows file dialog.
++QByteArray QWindowsXpFileDialogHelper::selectedRemoteContent() const
++{
++    return m_data.selectedRemoteContent();
++}
++
+ void QWindowsXpFileDialogHelper::selectNameFilter(const QString &f)
+ {
+     m_data.setSelectedNameFilter(f); // Dialog cannot be updated at run-time.
+diff -urN qtbase-opensource-src-5.7.1-orig/src/plugins/platforms/windows/qwindowskeymapper.cpp qtbase-opensource-src-5.7.1/src/plugins/platforms/windows/qwindowskeymapper.cpp
+--- qtbase-opensource-src-5.7.1-orig/src/plugins/platforms/windows/qwindowskeymapper.cpp	2016-12-01 11:17:04.000000000 +0300
++++ qtbase-opensource-src-5.7.1/src/plugins/platforms/windows/qwindowskeymapper.cpp	2017-04-30 12:10:24.891758085 +0300
+@@ -1274,6 +1274,10 @@
+     if (nativeVirtualKey > 255)
+         return result;
+ 
++    // Patch: This must not happen, but there are crash reports on the next line.
++    if (e->nativeVirtualKey() > 0xFF)
++        return result;
++
+     const KeyboardLayoutItem &kbItem = keyLayout[nativeVirtualKey];
+     if (!kbItem.exists)
+         return result;
+diff -urN qtbase-opensource-src-5.7.1-orig/src/plugins/platforms/windows/qwindowsservices.cpp qtbase-opensource-src-5.7.1/src/plugins/platforms/windows/qwindowsservices.cpp
+--- qtbase-opensource-src-5.7.1-orig/src/plugins/platforms/windows/qwindowsservices.cpp	2016-12-01 11:17:04.000000000 +0300
++++ qtbase-opensource-src-5.7.1/src/plugins/platforms/windows/qwindowsservices.cpp	2017-04-30 12:10:24.891758085 +0300
+@@ -132,6 +132,10 @@
+             command.prepend(doubleQuote);
+         }
+     }
++
++    // Patch: Fix mail launch if no param is expected in this command.
++    if (command.indexOf(QStringLiteral("%1")) < 0) return false;
++
+     // Pass the url as the parameter. Should use QProcess::startDetached(),
+     // but that cannot handle a Windows command line [yet].
+     command.replace(QLatin1String("%1"), url.toString(QUrl::FullyEncoded));
+diff -urN qtbase-opensource-src-5.7.1-orig/src/plugins/platforms/windows/qwindowswindow.cpp qtbase-opensource-src-5.7.1/src/plugins/platforms/windows/qwindowswindow.cpp
+--- qtbase-opensource-src-5.7.1-orig/src/plugins/platforms/windows/qwindowswindow.cpp	2016-12-01 11:17:04.000000000 +0300
++++ qtbase-opensource-src-5.7.1/src/plugins/platforms/windows/qwindowswindow.cpp	2017-04-30 12:45:24.617472937 +0300
+@@ -1149,7 +1149,8 @@
+         // Clear any transient child relationships as Windows will otherwise destroy them (QTBUG-35499, QTBUG-36666)
+         if (QWindow *transientChild = findTransientChild(window()))
+             if (QWindowsWindow *tw = QWindowsWindow::windowsWindowOf(transientChild))
+-                tw->updateTransientParent();
++                // Patch: Fix possibility of add / remove taskbar icon of the window.
++                tw->clearTransientParent();
+         QWindowsContext *context = QWindowsContext::instance();
+         if (context->windowUnderMouse() == window())
+             context->clearWindowUnderMouse();
+@@ -1366,6 +1367,21 @@
+         if (const QWindowsWindow *tw = QWindowsWindow::windowsWindowOf(tp))
+             if (!tw->testFlag(WithinDestroy)) // Prevent destruction by parent window (QTBUG-35499, QTBUG-36666)
+                 newTransientParent = tw->handle();
++    // Patch: Fix possibility of add / remove taskbar icon of the window.
++    if (newTransientParent && newTransientParent != oldTransientParent)
++        SetWindowLongPtr(m_data.hwnd, GWL_HWNDPARENT, (LONG_PTR)newTransientParent);
++#endif // !Q_OS_WINCE
++}
++
++// Patch: Fix possibility of add / remove taskbar icon of the window.
++void QWindowsWindow::clearTransientParent() const
++{
++#ifndef Q_OS_WINCE
++    if (window()->type() == Qt::Popup)
++        return; // QTBUG-34503, // a popup stays on top, no parent, see also WindowCreationData::fromWindow().
++    // Update transient parent.
++    const HWND oldTransientParent = transientParentHwnd(m_data.hwnd);
++    HWND newTransientParent = 0;
+     if (newTransientParent != oldTransientParent)
+         SetWindowLongPtr(m_data.hwnd, GWL_HWNDPARENT, LONG_PTR(newTransientParent));
+ #endif // !Q_OS_WINCE
+@@ -1567,10 +1583,14 @@
+         handleGeometryChange();
+         break;
+     case SIZE_RESTORED:
+-        if (isFullScreen_sys())
+-            handleWindowStateChange(Qt::WindowFullScreen);
+-        else if (m_windowState != Qt::WindowNoState && !testFlag(MaximizeToFullScreen))
++        // Patch: When resolution is changed for a frameless fullscreen widget
++        // handleWindowStateChange call prevents correct geometry get in handleGeometryChange().
++        if (isFullScreen_sys()) {
++            if (m_windowState != Qt::WindowFullScreen)
++                handleWindowStateChange(Qt::WindowFullScreen);
++        } else if (m_windowState != Qt::WindowNoState && !testFlag(MaximizeToFullScreen)) {
+             handleWindowStateChange(Qt::WindowNoState);
++        }
+         handleGeometryChange();
+         break;
+     }
+diff -urN qtbase-opensource-src-5.7.1-orig/src/plugins/platforms/windows/qwindowswindow.h qtbase-opensource-src-5.7.1/src/plugins/platforms/windows/qwindowswindow.h
+--- qtbase-opensource-src-5.7.1-orig/src/plugins/platforms/windows/qwindowswindow.h	2016-12-01 11:17:04.000000000 +0300
++++ qtbase-opensource-src-5.7.1/src/plugins/platforms/windows/qwindowswindow.h	2017-04-30 12:10:24.893758111 +0300
+@@ -336,6 +336,10 @@
+     inline void setWindowState_sys(Qt::WindowState newState);
+     inline void setParent_sys(const QPlatformWindow *parent);
+     inline void updateTransientParent() const;
++
++    // Patch: Fix possibility of add / remove taskbar icon of the window.
++    inline void clearTransientParent() const;
++
+     void destroyWindow();
+     inline bool isDropSiteEnabled() const { return m_dropTarget != 0; }
+     void setDropSiteEnabled(bool enabled);
+diff -urN qtbase-opensource-src-5.7.1-orig/src/widgets/dialogs/qfiledialog.cpp qtbase-opensource-src-5.7.1/src/widgets/dialogs/qfiledialog.cpp
+--- qtbase-opensource-src-5.7.1-orig/src/widgets/dialogs/qfiledialog.cpp	2016-12-01 11:17:04.000000000 +0300
++++ qtbase-opensource-src-5.7.1/src/widgets/dialogs/qfiledialog.cpp	2017-04-30 12:40:50.912560908 +0300
+@@ -1203,6 +1203,15 @@
+     return files;
+ }
+ 
++// Patch: Adding select-by-url for Windows file dialog.
++QByteArray QFileDialogPrivate::userSelectedRemoteContent() const
++{
++    if (nativeDialogInUse)
++        return selectedRemoteContent_sys();
++
++    return QByteArray();
++}
++
+ QStringList QFileDialogPrivate::addDefaultSuffixToFiles(const QStringList &filesToFix) const
+ {
+     QStringList files;
+@@ -1270,6 +1279,14 @@
+     return files;
+ }
+ 
++// Patch: Adding select-by-url for Windows file dialog.
++QByteArray QFileDialog::selectedRemoteContent() const
++{
++    Q_D(const QFileDialog);
++
++    return d->userSelectedRemoteContent();
++}
++
+ /*!
+     Returns a list of urls containing the selected files in the dialog.
+     If no files are selected, or the mode is not ExistingFiles or
+@@ -1297,7 +1314,8 @@
+     Makes a list of filters from ;;-separated text.
+     Used by the mac and windows implementations
+ */
+-QStringList qt_make_filter_list(const QString &filter)
++// Patch: make this available to Telegram linked to Qt shared libraries
++Q_GUI_EXPORT QStringList qt_make_filter_list(const QString &filter)
+ {
+     QString f(filter);
+ 
+diff -urN qtbase-opensource-src-5.7.1-orig/src/widgets/dialogs/qfiledialog.h qtbase-opensource-src-5.7.1/src/widgets/dialogs/qfiledialog.h
+--- qtbase-opensource-src-5.7.1-orig/src/widgets/dialogs/qfiledialog.h	2016-12-01 11:17:04.000000000 +0300
++++ qtbase-opensource-src-5.7.1/src/widgets/dialogs/qfiledialog.h	2017-04-30 12:10:24.906758279 +0300
+@@ -114,6 +114,9 @@
+     void selectFile(const QString &filename);
+     QStringList selectedFiles() const;
+ 
++    // Patch: Adding select-by-url for Windows file dialog.
++    QByteArray selectedRemoteContent() const;
++
+     void selectUrl(const QUrl &url);
+     QList<QUrl> selectedUrls() const;
+ 
+diff -urN qtbase-opensource-src-5.7.1-orig/src/widgets/dialogs/qfiledialog_p.h qtbase-opensource-src-5.7.1/src/widgets/dialogs/qfiledialog_p.h
+--- qtbase-opensource-src-5.7.1-orig/src/widgets/dialogs/qfiledialog_p.h	2016-12-01 11:17:04.000000000 +0300
++++ qtbase-opensource-src-5.7.1/src/widgets/dialogs/qfiledialog_p.h	2017-04-30 12:10:24.906758279 +0300
+@@ -129,6 +129,10 @@
+     static QString initialSelection(const QUrl &path);
+     QStringList typedFiles() const;
+     QList<QUrl> userSelectedFiles() const;
++
++    // Patch: Adding select-by-url for Windows file dialog.
++    QByteArray userSelectedRemoteContent() const;
++
+     QStringList addDefaultSuffixToFiles(const QStringList &filesToFix) const;
+     QList<QUrl> addDefaultSuffixToUrls(const QList<QUrl> &urlsToFix) const;
+     bool removeDirectory(const QString &path);
+@@ -261,6 +265,10 @@
+     QUrl directory_sys() const;
+     void selectFile_sys(const QUrl &filename);
+     QList<QUrl> selectedFiles_sys() const;
++
++    // Patch: Adding select-by-url for Windows file dialog.
++    QByteArray selectedRemoteContent_sys() const;
++
+     void setFilter_sys();
+     void selectNameFilter_sys(const QString &filter);
+     QString selectedNameFilter_sys() const;
+@@ -398,6 +406,14 @@
+     return QList<QUrl>();
+ }
+ 
++// Patch: Adding select-by-url for Windows file dialog.
++inline QByteArray QFileDialogPrivate::selectedRemoteContent_sys() const
++{
++    if (QPlatformFileDialogHelper *helper = platformFileDialogHelper())
++        return helper->selectedRemoteContent();
++    return QByteArray();
++}
++
+ inline void QFileDialogPrivate::setFilter_sys()
+ {
+     if (QPlatformFileDialogHelper *helper = platformFileDialogHelper())
+diff -urN qtbase-opensource-src-5.7.1-orig/src/widgets/kernel/qwidget.cpp qtbase-opensource-src-5.7.1/src/widgets/kernel/qwidget.cpp
+--- qtbase-opensource-src-5.7.1-orig/src/widgets/kernel/qwidget.cpp	2016-12-01 11:17:04.000000000 +0300
++++ qtbase-opensource-src-5.7.1/src/widgets/kernel/qwidget.cpp	2017-04-30 12:10:24.911758343 +0300
+@@ -5170,6 +5170,17 @@
+         return; // Fully transparent.
+ 
+     Q_D(QWidget);
++
++    // Patch: save and restore dirtyOpaqueChildren field.
++    //
++    // Just like in QWidget::grab() this field should be restored
++    // after the d->render() call, because it will be set to 1 and
++    // opaqueChildren field will be filled with empty region in
++    // case the widget is hidden (because all the opaque children
++    // will be skipped in isVisible() check).
++    //
++    const bool oldDirtyOpaqueChildren = d->dirtyOpaqueChildren;
++
+     const bool inRenderWithPainter = d->extra && d->extra->inRenderWithPainter;
+     const QRegion toBePainted = !inRenderWithPainter ? d->prepareToRender(sourceRegion, renderFlags)
+                                                      : sourceRegion;
+@@ -5191,6 +5202,10 @@
+     if (!inRenderWithPainter && (opacity < 1.0 || (target->devType() == QInternal::Printer))) {
+         d->render_helper(painter, targetOffset, toBePainted, renderFlags);
+         d->extra->inRenderWithPainter = inRenderWithPainter;
++
++        // Patch: save and restore dirtyOpaqueChildren field.
++        d->dirtyOpaqueChildren = oldDirtyOpaqueChildren;
++
+         return;
+     }
+ 
+@@ -5222,6 +5237,9 @@
+     d->setSharedPainter(oldPainter);
+ 
+     d->extra->inRenderWithPainter = inRenderWithPainter;
++
++    // Patch: save and restore dirtyOpaqueChildren field.
++    d->dirtyOpaqueChildren = oldDirtyOpaqueChildren;
+ }
+ 
+ static void sendResizeEvents(QWidget *target)
+@@ -8803,7 +8821,8 @@
+     case QEvent::KeyPress: {
+         QKeyEvent *k = (QKeyEvent *)event;
+         bool res = false;
+-        if (!(k->modifiers() & (Qt::ControlModifier | Qt::AltModifier))) {  //### Add MetaModifier?
++        // Patch: Enable Ctrl+Tab and Ctrl+Shift+Tab / Ctrl+Backtab handle in-app.
++        if (!(k->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))) {  //### Add MetaModifier?
+             if (k->key() == Qt::Key_Backtab
+                 || (k->key() == Qt::Key_Tab && (k->modifiers() & Qt::ShiftModifier)))
+                 res = focusNextPrevChild(false);
+diff -urN qtbase-opensource-src-5.7.1-orig/src/widgets/util/qsystemtrayicon.cpp qtbase-opensource-src-5.7.1/src/widgets/util/qsystemtrayicon.cpp
+--- qtbase-opensource-src-5.7.1-orig/src/widgets/util/qsystemtrayicon.cpp	2016-12-01 11:17:04.000000000 +0300
++++ qtbase-opensource-src-5.7.1/src/widgets/util/qsystemtrayicon.cpp	2017-04-30 12:10:24.912758356 +0300
+@@ -715,6 +715,10 @@
+     if (menu) {
+         addPlatformMenu(menu);
+         qpa_sys->updateMenu(menu->platformMenu());
++
++    // Patch: Create a rich os x tray icon (pixel-perfect, theme switching).
++    } else {
++        qpa_sys->updateMenu(nullptr);
+     }
+ }
+ 
+diff -urN qtbase-opensource-src-5.7.1-orig/src/widgets/widgets/qabstractscrollarea.cpp qtbase-opensource-src-5.7.1/src/widgets/widgets/qabstractscrollarea.cpp
+--- qtbase-opensource-src-5.7.1-orig/src/widgets/widgets/qabstractscrollarea.cpp	2016-12-01 11:17:04.000000000 +0300
++++ qtbase-opensource-src-5.7.1/src/widgets/widgets/qabstractscrollarea.cpp	2017-04-30 12:10:24.913758369 +0300
+@@ -647,15 +647,22 @@
+ QSize QAbstractScrollArea::maximumViewportSize() const
+ {
+     Q_D(const QAbstractScrollArea);
+-    int hsbExt = d->hbar->sizeHint().height();
+-    int vsbExt = d->vbar->sizeHint().width();
++    // Patch: Count the sizeHint of the bar only if it is displayed.
++    //int hsbExt = d->hbar->sizeHint().height();
++    //int vsbExt = d->vbar->sizeHint().width();
+ 
+     int f = 2 * d->frameWidth;
+     QSize max = size() - QSize(f + d->left + d->right, f + d->top + d->bottom);
+-    if (d->vbarpolicy == Qt::ScrollBarAlwaysOn)
++
++    // Patch: Count the sizeHint of the bar only if it is displayed.
++    if (d->vbarpolicy == Qt::ScrollBarAlwaysOn) {
++        int vsbExt = d->vbar->sizeHint().width();
+         max.rwidth() -= vsbExt;
+-    if (d->hbarpolicy == Qt::ScrollBarAlwaysOn)
++    }
++    if (d->hbarpolicy == Qt::ScrollBarAlwaysOn) {
++        int hsbExt = d->hbar->sizeHint().height();
+         max.rheight() -= hsbExt;
++    }
+     return max;
+ }
+ 
+diff -urN qtbase-opensource-src-5.7.1-orig/src/widgets/widgets/qwidgetlinecontrol.cpp qtbase-opensource-src-5.7.1/src/widgets/widgets/qwidgetlinecontrol.cpp
+--- qtbase-opensource-src-5.7.1-orig/src/widgets/widgets/qwidgetlinecontrol.cpp	2016-12-01 11:17:04.000000000 +0300
++++ qtbase-opensource-src-5.7.1/src/widgets/widgets/qwidgetlinecontrol.cpp	2017-04-30 12:10:24.914758382 +0300
+@@ -46,6 +46,11 @@
+ #include <private/qguiapplication_p.h>
+ #include <qpa/qplatformtheme.h>
+ #include <qstylehints.h>
++
++// Patch: Enable Ctrl+key and Ctrl+Shift+key in all locales except German.
++// See https://github.com/telegramdesktop/tdesktop/pull/1185.
++#include <QtCore/QLocale>
++
+ #ifndef QT_NO_ACCESSIBILITY
+ #include "qaccessible.h"
+ #endif
+@@ -1925,11 +1930,21 @@
+     }
+ 
+     // QTBUG-35734: ignore Ctrl/Ctrl+Shift; accept only AltGr (Alt+Ctrl) on German keyboards
+-    if (unknown && !isReadOnly()
+-        && event->modifiers() != Qt::ControlModifier
+-        && event->modifiers() != (Qt::ControlModifier | Qt::ShiftModifier)) {
++
++    // Patch: Enable Ctrl+key and Ctrl+Shift+key in all locales except German.
++    // See https://github.com/telegramdesktop/tdesktop/pull/1185.
++    bool skipCtrlAndCtrlShift = false;
++    if (QGuiApplication::inputMethod()->locale().language() == QLocale::German) {
++        if (event->modifiers() == Qt::ControlModifier
++            || event->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier)) {
++            skipCtrlAndCtrlShift = true;
++        }
++    }
++    if (unknown && !isReadOnly() && !skipCtrlAndCtrlShift) {
+         QString t = event->text();
+-        if (!t.isEmpty() && t.at(0).isPrint()) {
++
++        // Patch: Enable ZWJ and ZWNJ characters to be in text input.
++        if (!t.isEmpty() && (t.at(0).isPrint() || t.at(0).unicode() == 0x200C || t.at(0).unicode() == 0x200D)) {
+             insert(t);
+ #ifndef QT_NO_COMPLETER
+             complete(event->key());
+diff -urN qtbase-opensource-src-5.7.1-orig/src/widgets/widgets/qwidgettextcontrol.cpp qtbase-opensource-src-5.7.1/src/widgets/widgets/qwidgettextcontrol.cpp
+--- qtbase-opensource-src-5.7.1-orig/src/widgets/widgets/qwidgettextcontrol.cpp	2016-12-01 11:17:04.000000000 +0300
++++ qtbase-opensource-src-5.7.1/src/widgets/widgets/qwidgettextcontrol.cpp	2017-04-30 12:10:24.916758408 +0300
+@@ -77,6 +77,11 @@
+ #include <qinputmethod.h>
+ #include <qtooltip.h>
+ #include <qstyleoption.h>
++
++// Patch: Enable Ctrl+key and Ctrl+Shift+key in all locales except German.
++// See https://github.com/telegramdesktop/tdesktop/pull/1185.
++#include <QtCore/QLocale>
++
+ #include <QtWidgets/qlineedit.h>
+ #include <QtGui/qaccessible.h>
+ #include <QtCore/qmetaobject.h>
+@@ -1362,13 +1367,24 @@
+ process:
+     {
+         // QTBUG-35734: ignore Ctrl/Ctrl+Shift; accept only AltGr (Alt+Ctrl) on German keyboards
+-        if (e->modifiers() == Qt::ControlModifier
+-            || e->modifiers() == (Qt::ShiftModifier | Qt::ControlModifier)) {
++
++        // Patch: Enable Ctrl+key and Ctrl+Shift+key in all locales except German.
++        // See https://github.com/telegramdesktop/tdesktop/pull/1185.
++        bool skipCtrlAndCtrlShift = false;
++        if (QGuiApplication::inputMethod()->locale().language() == QLocale::German) {
++            if (e->modifiers() == Qt::ControlModifier
++                || e->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier)) {
++                skipCtrlAndCtrlShift = true;
++            }
++        }
++        if (skipCtrlAndCtrlShift) {
+             e->ignore();
+             return;
+         }
+         QString text = e->text();
+-        if (!text.isEmpty() && (text.at(0).isPrint() || text.at(0) == QLatin1Char('\t'))) {
++
++        // Patch: Enable ZWJ and ZWNJ characters to be in text input.
++        if (!text.isEmpty() && (text.at(0).isPrint() || text.at(0) == QLatin1Char('\t') || text.at(0).unicode() == 0x200C || text.at(0).unicode() == 0x200D)) {
+             if (overwriteMode
+                 // no need to call deleteChar() if we have a selection, insertText
+                 // does it already
